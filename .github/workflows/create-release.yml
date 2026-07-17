@@ -1,0 +1,19 @@
+# NOTE: tags pushed by the publish workflow's GITHUB_TOKEN will NOT trigger
+# this workflow — GitHub suppresses events initiated by the built-in token to
+# prevent workflow loops. This workflow serves manually pushed tags (e.g.
+# `git tag 42-blue && git push origin 42-blue`).
+name: Create GitHub release
+on:
+  push:
+    tags: ['*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create ${{ github.ref_name }} --generate-notes

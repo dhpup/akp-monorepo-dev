@@ -1,0 +1,110 @@
+name: PR preview image
+run-name: "Build preview image for PR #${{ github.event.pull_request.number }}"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches:
+      - main
+    paths:
+      # Per-app path filter — in a multi-app monorepo each app has its own
+      # workflow filtered on apps/<app>/**. rollouts-app is self-contained
+      # (its own go.mod), so no shared root paths are needed.
+      - 'apps/rollouts-app/**'
+      - '.github/workflows/preview-rollouts-app.yml'
+
+permissions:
+  contents: read
+  packages: write        # push the preview image to GHCR
+  pull-requests: write   # post the preview-environment PR comment via the built-in GITHUB_TOKEN
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image name and preview color
+        run: |
+          # Derive the image name from the repository so forks need zero
+          # workflow edits. GHCR requires lowercase image names.
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-rollouts-app" >> "$GITHUB_ENV"
+          # Preview tag contract: pr-<N>-<color>, matching ^pr-\d+-.+$.
+          # Color = PR number modulo 6, so a PR keeps the same color across pushes.
+          COLORS=("red" "green" "blue" "yellow" "purple" "orange")
+          INDEX=$(( ${{ github.event.pull_request.number }} % ${#COLORS[@]} ))
+          echo "APP_COLOR=${COLORS[$INDEX]}" >> "$GITHUB_ENV"
+
+      - name: Build and push PR preview image
+        uses: docker/build-push-action@v5
+        id: push
+        with:
+          context: apps/rollouts-app
+          file: apps/rollouts-app/Dockerfile
+          push: true
+          build-args: |
+            COLOR=${{ env.APP_COLOR }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=pr-${{ github.event.pull_request.number }}-${{ env.APP_COLOR }}
+          # Tag convention expected by the platform repo's per-PR ephemeral
+          # Warehouse (^pr-<N>-.+$) — mutually exclusive with release tags.
+          tags: |
+            ${{ env.IMAGE }}:pr-${{ github.event.pull_request.number }}-${{ env.APP_COLOR }}
+
+      # Post (or update) a sticky PR comment with the preview image tag.
+      # Uses the built-in GITHUB_TOKEN (no PAT / GitHub App needed) — it can
+      # comment on the PR that triggered this same-repo workflow. Only runs
+      # for PRs labeled `preview` (the label that actually provisions an
+      # environment once the platform repo's ephemeral example is enabled).
+      - name: Upsert preview-environment PR comment
+        if: contains(github.event.pull_request.labels.*.name, 'preview')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          MARKER="<!-- preview-env-comment -->"
+          IMG="${IMAGE}:pr-${PR}-${APP_COLOR}"
+          NS="demo-ephemeral-pr-${PR}"
+          cat > comment.md <<EOF
+          ${MARKER}
+          ## Preview Environment
+
+          **Image:** \`${IMG}\`
+          **Namespace:** \`${NS}\`
+
+          The preview image for this PR has been published. Once the platform
+          repo's ephemeral-environments example is enabled, Kargo will detect
+          this tag and provision a preview environment in namespace \`${NS}\`
+          (it may take a minute after the image finishes building).
+
+          Once synced, access it locally with:
+
+          \`\`\`bash
+          kubectl -n ${NS} port-forward svc/app 8080:8080
+          # then open http://localhost:8080
+          \`\`\`
+
+          _Posted automatically by CI._
+          EOF
+          CID=$(gh api "repos/${REPO}/issues/${PR}/comments" \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${CID}" -F body=@comment.md >/dev/null
+            echo "Updated existing preview comment ($CID)"
+          else
+            gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+            echo "Created preview comment"
+          fi

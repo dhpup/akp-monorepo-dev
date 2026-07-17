@@ -1,0 +1,39 @@
+name: Clean up PR preview images
+run-name: "Clean up preview images for PR #${{ github.event.pull_request.number }}"
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  packages: write   # delete preview package versions from GHCR
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # Best-effort: deleting package versions with the built-in GITHUB_TOKEN
+      # only works if the package grants this repository admin access (GHCR
+      # does this automatically for packages first published from this repo's
+      # workflows). If it fails, stale pr-<N>-* tags are harmless — they just
+      # linger in the registry until deleted manually.
+      - name: Delete pr-${{ github.event.pull_request.number }}-* image versions
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          PKG="${GITHUB_REPOSITORY#*/}-rollouts-app"
+          PKG="${PKG,,}"
+          # The owner may be an org or a user — try both endpoints.
+          for SCOPE in orgs users; do
+            echo "Trying /${SCOPE}/${OWNER}/packages/container/${PKG} ..."
+            IDS=$(gh api "/${SCOPE}/${OWNER}/packages/container/${PKG}/versions" --paginate \
+              --jq ".[] | select(.metadata.container.tags[]? | startswith(\"pr-${PR}-\")) | .id" 2>/dev/null || true)
+            for ID in $IDS; do
+              echo "Deleting package version ${ID} (${SCOPE}/${OWNER})"
+              gh api -X DELETE "/${SCOPE}/${OWNER}/packages/container/${PKG}/versions/${ID}" || true
+            done
+          done
+          echo "Done (best effort)."
