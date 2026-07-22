@@ -1,6 +1,6 @@
 # rollouts-app
 
-Source application for the Akuity Platform quickstart — see the [akp-monorepo README](../../README.md) and the [akp-platform](https://github.com/example-org/akp-platform) repo for the GitOps side.
+Source application for the Akuity Platform quickstart — see the [akp-monorepo-dev README](../../README.md) and the [akp-platform-dev](https://github.com/example-org/akp-platform-dev) repo for the GitOps side.
 
 A simple Go web app that displays a grid of colored tiles. The color is baked in at build time and changes with each image tag, making it easy to visually confirm which build is running in each environment.
 
@@ -8,14 +8,14 @@ Derived from the upstream [argoproj/rollouts-demo](https://github.com/argoproj/r
 
 ## Image
 
-Published to: `ghcr.io/example-org/akp-monorepo-rollouts-app`
+Published to: `ghcr.io/example-org/akp-monorepo-dev-rollouts-app`
 
 | Kind | Regex | Example |
 |------|-------|---------|
 | Release | `^\d+-[a-z]+$` | `42-blue` |
 | Preview | `^pr-\d+-.+$` | `pr-7-green` |
 
-Tags are produced by the CI workflows in [`.github/workflows/`](../../.github/workflows/); Kargo (configured in akp-platform) watches the registry and promotes new tags. Don't invent new tag schemes — the platform repo's Warehouse regexes depend on these.
+Tags are produced by the CI workflows in [`.github/workflows/`](../../.github/workflows/); Kargo (configured in akp-platform-dev) watches the registry and promotes new tags. Don't invent new tag schemes — the platform repo's Warehouse regexes depend on these.
 
 ## Local development
 
